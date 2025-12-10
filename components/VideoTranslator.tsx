@@ -80,27 +80,36 @@ export default function VideoTranslator({ userTokens, onTokenUpdate }: VideoTran
         className="hidden"
       />
 
-      {/* 드래그 앤 드롭 + 파일 선택 버튼 완벽 작동 영역 */}
+      {/* 드래그 앤 드롭 + 파일 선택 완벽 작동 (최종 버전) */}
       <div
         onDrop={handleDrop}
         onDragOver={(e) => e.preventDefault()}
         onDragEnter={(e) => e.preventDefault()}
-        className="border-4 border-dashed border-orange-300 rounded-2xl p-20 text-center bg-orange-50/30 hover:border-orange-500 hover:bg-orange-100/50 transition-all cursor-pointer"
+        className="group border-4 border-dashed border-orange-300 rounded-2xl p-20 text-center bg-orange-50/30 hover:border-orange-500 hover:bg-orange-100/50 transition-all duration-300"
       >
-        <Upload className="w-20 h-20 mx-auto text-orange-600 mb-6" />
-        <p className="text-3xl font-black text-gray-800">영상 또는 음성을 올려주세요</p>
-        <p className="text-lg text-gray-600 mt-3 mb-8">
+        <Upload className="w-20 h-20 mx-auto text-orange-600 mb-6 group-hover:scale-110 transition-transform" />
+        <p className="text-3xl font-black text-gray-800 mb-3">영상 또는 음성을 올려주세요</p>
+        <p className="text-lg text-gray-600 mb-10">
           드래그 앤 드롭하거나 아래 버튼을 클릭하세요
         </p>
 
-        {/* 진짜 파일 선택 버튼 */}
-        <button
-          type="button"
-          onClick={handleButtonClick}
-          className="px-12 py-5 bg-gradient-to-r from-orange-600 to-red-600 text-white font-black text-xl rounded-2xl hover:shadow-2xl hover:scale-105 transition-all"
+        {/* 이 버튼이 진짜 핵심 */}
+        <label
+          htmlFor="file-upload"
+          className="inline-block px-12 py-5 bg-gradient-to-r from-orange-600 to-red-600 text-white font-black text-xl rounded-2xl hover:shadow-2xl hover:scale-105 transition-all cursor-pointer"
         >
           내 컴퓨터에서 파일 선택
-        </button>
+        </label>
+
+        {/* 숨겨진 실제 input */}
+        <input
+          id="file-upload"
+          type="file"
+          ref={fileInputRef}
+          onChange={handleFileChange}
+          accept="video/*,audio/*"
+          className="hidden"
+        />
       </div>
 
       {file && (
