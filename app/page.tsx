@@ -1,7 +1,5 @@
 "use client";
 
-import { WalnutIcon } from "@/components/WalnutIcon";
-import TokenBalance from "@/components/TokenBalance";
 import VideoTranslator from "@/components/VideoTranslator";
 import { useState } from "react";
 
@@ -14,11 +12,11 @@ export default function Home() {
       <header className="fixed top-0 w-full z-50 bg-[#FDFBF7]/95 backdrop-blur-md border-b border-orange-100">
         <div className="max-w-7xl mx-auto px-6 h-20 flex justify-between items-center">
           <h1 className="text-3xl font-black tracking-tighter flex items-center gap-3">
-            <WalnutIcon className="w-9 h-9 text-orange-600" />
+           
             WALNUT
           </h1>
           <div className="flex items-center gap-6">
-            <TokenBalance balance={tokens} />
+          
             <button className="bg-gradient-to-r from-orange-500 to-red-600 text-white px-8 py-3 rounded-full font-bold shadow-lg hover:shadow-xl transition">
               토큰 충전
             </button>

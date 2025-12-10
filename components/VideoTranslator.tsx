@@ -1,151 +1,98 @@
-// components/VideoTranslator.tsx
 "use client";
 
-import { useState, useRef } from "react";
-import { Upload, Film } from "lucide-react";
+import { useState } from "react";
 
-interface VideoTranslatorProps {
+interface Props {
   userTokens: number;
-  onTokenUpdate: (newTokens: number) => void;
+  onTokenUpdate: (tokens: number) => void;
 }
 
-export default function VideoTranslator({ userTokens, onTokenUpdate }: VideoTranslatorProps) {
+export default function VideoTranslator({ userTokens, onTokenUpdate }: Props) {
   const [file, setFile] = useState<File | null>(null);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [result, setResult] = useState<any>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // 1분당 25토큰 (10분 = 250토큰, 2시간 = 3000토큰)
-  const calculateRequiredTokens = () => {
-    if (!file) return 0;
-    // 실제로는 파일 메타데이터에서 duration 가져와야 하지만, 지금은 임시로 10분 가정
-    // 나중에 ffprobe-wasm으로 정확히 계산할게
-    return 250;
-  };
-
-  const requiredTokens = calculateRequiredTokens();
-  const hasEnough = userTokens >= requiredTokens;
-
-  const handleButtonClick = () => fileInputRef.current?.click();
+  const [loading, setLoading] = useState(false);
+  const [downloadUrl, setDownloadUrl] = useState(""); // 다운로드 링크 저장
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selected = e.target.files?.[0];
-    if (selected && (selected.type.startsWith("video/") || selected.type.startsWith("audio/"))) {
-      setFile(selected);
-    } else if (selected) {
-      alert("영상 또는 음성 파일만 가능합니다");
-    }
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    const dropped = e.dataTransfer.files[0];
-    if (dropped && (dropped.type.startsWith("video/") || dropped.type.startsWith("audio/"))) {
-      setFile(dropped);
+    if (e.target.files && e.target.files[0]) {
+      setFile(e.target.files[0]);
     }
   };
 
   const handleUpload = async () => {
-    if (!file || !hasEnough) return;
-
-    setIsProcessing(true);
-    const formData = new FormData();
-    formData.append("file", file);
+    if (!file) return alert("파일을 선택해주세요!");
+    setLoading(true);
+    setDownloadUrl("");
 
     try {
-      const res = await fetch("/api/transcribe", { method: "POST", body: formData });
-      const data = await res.json();
+      const formData = new FormData();
+      formData.append("file", file);
 
-      if (data.success) {
-        setResult(data);
-        onTokenUpdate(userTokens - requiredTokens); // 실제 토큰 차감
-        alert("자막 추출 성공! 토큰이 차감되었습니다");
-      } else {
-        alert("실패: " + data.error);
-      }
+      // responseType을 blob으로 설정하지 않고, fetch 후 blob()으로 변환
+      const res = await fetch("http://localhost:8000/upload/video", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) throw new Error("서버 에러 발생");
+
+      // 파일 데이터(Blob) 받기
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      setDownloadUrl(url); // 다운로드 버튼 활성화
+      
+      onTokenUpdate(userTokens - 50); // 고급 기능이니 토큰 더 차감
+
     } catch (error) {
-      alert("업로드 중 오류 발생");
+      console.error(error);
+      alert("영상 변환 실패. 서버 로그를 확인하세요.");
     } finally {
-      setIsProcessing(false);
+      setLoading(false);
     }
   };
 
   return (
-    <div className="bg-white rounded-3xl shadow-2xl p-10 border border-orange-100">
-      <input
-        type="file"
-        ref={fileInputRef}
-        onChange={handleFileChange}
-        accept="video/*,audio/*"
-        className="hidden"
-      />
-
-      {/* 드래그 앤 드롭 + 파일 선택 완벽 작동 (최종 버전) */}
-      <div
-        onDrop={handleDrop}
-        onDragOver={(e) => e.preventDefault()}
-        onDragEnter={(e) => e.preventDefault()}
-        className="group border-4 border-dashed border-orange-300 rounded-2xl p-20 text-center bg-orange-50/30 hover:border-orange-500 hover:bg-orange-100/50 transition-all duration-300"
-      >
-        <Upload className="w-20 h-20 mx-auto text-orange-600 mb-6 group-hover:scale-110 transition-transform" />
-        <p className="text-3xl font-black text-gray-800 mb-3">영상 또는 음성을 올려주세요</p>
-        <p className="text-lg text-gray-600 mb-10">
-          드래그 앤 드롭하거나 아래 버튼을 클릭하세요
-        </p>
-
-        {/* 이 버튼이 진짜 핵심 */}
-        <label
-          htmlFor="file-upload"
-          className="inline-block px-12 py-5 bg-gradient-to-r from-orange-600 to-red-600 text-white font-black text-xl rounded-2xl hover:shadow-2xl hover:scale-105 transition-all cursor-pointer"
-        >
-          내 컴퓨터에서 파일 선택
-        </label>
-
-        {/* 숨겨진 실제 input */}
-        <input
-          id="file-upload"
-          type="file"
-          ref={fileInputRef}
+    <div className="bg-white p-8 rounded-2xl shadow-xl border border-orange-100 text-center">
+      <div className="mb-6">
+        <input 
+          type="file" 
+          accept="video/mp4" 
           onChange={handleFileChange}
-          accept="video/*,audio/*"
-          className="hidden"
+          className="block w-full text-sm text-slate-500
+            file:mr-4 file:py-2 file:px-4
+            file:rounded-full file:border-0
+            file:text-sm file:font-semibold
+            file:bg-orange-50 file:text-orange-700
+            hover:file:bg-orange-100
+          "
         />
       </div>
 
-      {file && (
-        <div className="mt-8 p-6 bg-gradient-to-r from-orange-50 to-red-50 rounded-2xl border border-orange-200">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <Film className="w-12 h-12 text-orange-600" />
-              <div>
-                <p className="text-2xl font-bold">{file.name}</p>
-                <p className="text-gray-600">필요 토큰: {requiredTokens}개 (잔액: {userTokens}개)</p>
-              </div>
-            </div>
-            <button
-              onClick={handleUpload}
-              disabled={!hasEnough || isProcessing}
-              className={`px-10 py-5 rounded-2xl font-black text-xl transition ${
-                hasEnough && !isProcessing
-                  ? "bg-gradient-to-r from-orange-500 to-red-600 text-white hover:shadow-2xl"
-                  : "bg-gray-300 text-gray-600 cursor-not-allowed"
-              }`}
-            >
-              {isProcessing ? "처리 중..." : "한국어 자막 만들기"}
-            </button>
-          </div>
-        </div>
-      )}
+      <button 
+        onClick={handleUpload}
+        disabled={loading || !file}
+        className={`w-full py-4 rounded-xl font-bold text-lg transition-all
+          ${loading 
+            ? "bg-gray-300 cursor-not-allowed text-gray-500" 
+            : "bg-orange-600 hover:bg-orange-700 text-white shadow-md hover:shadow-lg"
+          }`}
+      >
+        {loading ? "AI가 영상을 분석하고 자막을 합성 중... (오래 걸림)" : "자막 영상 생성하기 (50 토큰)"}
+      </button>
 
-      {result && (
-        <div className="mt-8 p-8 bg-green-50 rounded-2xl border-2 border-green-300">
-          <h3 className="text-2xl font-bold text-green-800 mb-4">자막 추출 성공!</h3>
-          <pre className="text-sm bg-white p-6 rounded-lg overflow-auto max-h-96">
-            {result.text || "내용 없음"}
-          </pre>
-          <p className="text-gray-600 mt-4">
-            총 {Math.round((result.duration || 0) / 60)}분 · 화자 수: {result.words?.length > 0 ? new Set(result.words.map((w: any) => w.speaker)).size : 1}명
-          </p>
+      {/* 완료 시 다운로드 버튼 및 미리보기 표시 */}
+      {downloadUrl && (
+        <div className="mt-8 animate-fade-in space-y-4">
+          <h3 className="text-xl font-bold text-orange-800">🎉 완성된 영상</h3>
+          
+          <video controls src={downloadUrl} className="w-full rounded-lg shadow-lg" />
+          
+          <a 
+            href={downloadUrl} 
+            download="walnut_translated.mp4"
+            className="block w-full py-3 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 transition"
+          >
+            📥 내 컴퓨터에 저장하기
+          </a>
         </div>
       )}
     </div>

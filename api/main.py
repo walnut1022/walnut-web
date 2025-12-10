@@ -1,17 +1,31 @@
-from fastapi import FastAPI, UploadFile, File
-from fastapi.responses import FileResponse
-from fastapi.middleware.cors import CORSMiddleware
-from faster_whisper import WhisperModel
 import os
-import ffmpeg
-# 🚀 [수정됨] googletrans 대신 deep_translator를 사용합니다
-from deep_translator import GoogleTranslator 
-import datetime
 import shutil
+import subprocess
+import math
+import uuid
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from dotenv import load_dotenv  # 👈 이 임포트가 빠져있어서 추가했습니다
+from openai import OpenAI
+from anthropic import Anthropic 
+
+print("================ 점검 시작 ================")
+openai_key = os.environ.get("OPENAI_API_KEY")
+claude_key = os.environ.get("ANTHROPIC_API_KEY")
+
+print(f"1. OpenAI 키 상태: {'✅ 성공' if openai_key else '❌ 실패 (None)'}")
+if openai_key: print(f"   ㄴ 앞자리 확인: {openai_key[:5]}...")
+
+print(f"2. Claude 키 상태: {'✅ 성공' if claude_key else '❌ 실패 (None)'}")
+if claude_key: print(f"   ㄴ 앞자리 확인: {claude_key[:10]}...")
+print("================ 점검 끝 ================")
+# 1. 환경 변수 로드 (.env 파일 읽기)
+load_dotenv()
 
 app = FastAPI()
 
-# CORS 설정
+# 2. CORS 설정 (프론트엔드 통신 허용)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,119 +34,149 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 🧠 모델 설정 (large-v3가 가장 똑똑함, 너무 느리면 medium으로 변경)
-MODEL_SIZE = "large-v3"
+# 3. 업로드 폴더 생성
+UPLOAD_DIR = "temp_uploads"
+if not os.path.exists(UPLOAD_DIR):
+    os.makedirs(UPLOAD_DIR)
 
-print(f"🧠 AI 두뇌 로딩 중... ({MODEL_SIZE})")
-try:
-    # GPU 확인
-    model = WhisperModel(MODEL_SIZE, device="cuda", compute_type="float16")
-    print(f"✅ GPU 가속 활성화! ({MODEL_SIZE})")
-except:
-    # GPU 없으면 CPU
-    model = WhisperModel(MODEL_SIZE, device="cpu", compute_type="int8")
-    print(f"⚠️ GPU 없음. CPU 모드로 실행합니다.")
+# 4. 모델 설정 (Claude 3.5 Sonnet)
+CLAUDE_MODEL = "claude-3-5-sonnet-20240620"
 
+# 타임스탬프 포맷 함수
 def format_timestamp(seconds):
-    """자막 시간 포맷 변환 (00:00:00,000)"""
-    td = datetime.timedelta(seconds=seconds)
-    total_seconds = int(td.total_seconds())
-    hours = total_seconds // 3600
-    minutes = (total_seconds % 3600) // 60
-    secs = total_seconds % 60
-    millis = int(td.microseconds / 1000)
-    return f"{hours:02}:{minutes:02}:{secs:02},{millis:03}"
+    hours = math.floor(seconds / 3600)
+    seconds %= 3600
+    minutes = math.floor(seconds / 60)
+    seconds %= 60
+    return f"{hours:02d}:{minutes:02d}:{int(seconds):02d},{int((seconds % 1) * 1000):03d}"
 
-@app.post("/transcribe")
-async def transcribe_video(file: UploadFile = File(...)):
-    filename = file.filename
-    input_path = f"temp_{filename}"
-    output_video_path = f"output_{filename}"
-    srt_path = "subtitles.srt"
-
+@app.post("/upload/video")
+async def upload_video(file: UploadFile = File(...)):
     try:
-        # 1. 파일 저장
-        with open(input_path, "wb") as buffer:
+        # [수정됨] 하드코딩된 키 삭제함. 무조건 .env나 환경변수에서 가져옵니다.
+        openai_api_key = os.environ.get("OPENAI_API_KEY")
+        anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
+
+        if not openai_api_key or not anthropic_api_key:
+            raise HTTPException(status_code=500, detail="API Key가 .env 파일에 없습니다.")
+
+        # 클라이언트 초기화
+        openai_client = OpenAI(api_key=openai_api_key)
+        anthropic_client = Anthropic(api_key=anthropic_api_key)
+
+        # [1] 파일 저장
+        file_id = str(uuid.uuid4())
+        filename = f"{file_id}.mp4"
+        file_path = os.path.join(UPLOAD_DIR, filename)
+        
+        with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
+
+        abs_input_path = os.path.abspath(file_path)
+        abs_audio_path = os.path.abspath(file_path.replace(".mp4", ".mp3"))
         
-        print(f"🎬 [1/3] 음성 인식 시작...")
+        # FFmpeg로 오디오 추출
+        subprocess.run([
+            'ffmpeg', '-y', '-i', abs_input_path, '-vn', '-acodec', 'libmp3lame', abs_audio_path
+        ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        # [2] 듣기 담당: OpenAI Whisper
+        print("👂 1. OpenAI가 영상을 듣고 받아쓰는 중...")
+        with open(abs_audio_path, "rb") as audio_file:
+            transcript = openai_client.audio.transcriptions.create(
+                model="whisper-1", 
+                file=audio_file,
+                response_format="verbose_json"
+            )
+
+        full_text = transcript.text
+        sample_text = full_text[:1000] 
+
+        # [3] 감독 담당: Claude (분위기 분석)
+        print(f"🧠 2. Claude({CLAUDE_MODEL})가 영상 분위기를 정밀 분석합니다...")
         
-        # 2. Whisper로 음성 인식 (VAD 필터 켜기)
-        segments, info = model.transcribe(
-            input_path, 
-            beam_size=5, 
-            vad_filter=True,
-            vad_parameters=dict(min_silence_duration_ms=500)
+        director_response = anthropic_client.messages.create(
+            model=CLAUDE_MODEL, 
+            max_tokens=1000,
+            temperature=0, # 분석은 정확해야 하므로 0 추천
+            system="""
+            너는 세계 최고의 '영상 번역 디렉터'야. 
+            주어진 스크립트의 [장르, 화자의 성격, 상황, 타겟 시청자]를 완벽하게 분석해.
+            그리고 그 분석을 바탕으로, 번역가가 따라야 할 '구체적인 번역 지침(System Prompt)'을 작성해줘.
+            
+            결과는 군더더기 없이 오직 '지침(System Prompt)' 내용만 출력해.
+            """,
+            messages=[
+                {"role": "user", "content": f"분석할 스크립트 샘플:\n{sample_text}"}
+            ]
         )
-
-        print(f"🌍 감지된 언어: {info.language}")
-        print("📝 [2/3] 번역 및 자막 생성 중...")
         
-        # 🚀 [수정됨] 딥러닝 번역기 초기화
-        translator = GoogleTranslator(source='auto', target='ko')
+        # 응답 처리 (text 타입 확인)
+        custom_system_prompt = ""
+        if director_response.content and director_response.content[0].type == 'text':
+             custom_system_prompt = director_response.content[0].text
+        else:
+             custom_system_prompt = "자연스러운 한국어로 번역해줘."
 
-        with open(srt_path, "w", encoding="utf-8") as srt_file:
-            for i, segment in enumerate(segments):
-                start = format_timestamp(segment.start)
-                end = format_timestamp(segment.end)
-                original_text = segment.text.strip()
-                
-                if len(original_text) < 2: continue
+        print(f"🎯 Claude의 분석 결과:\n{custom_system_prompt}\n----------------")
 
-                try:
-                    # 한국어가 아닐 때만 번역
-                    if info.language != 'ko':
-                        translated = translator.translate(original_text)
-                    else:
-                        translated = original_text
-                except Exception as e:
-                    print(f"번역 에러(무시됨): {e}")
-                    translated = original_text 
-
-                # 로그 출력
-                print(f"[{start}] {original_text} -> {translated}")
-
-                srt_file.write(f"{i+1}\n")
-                srt_file.write(f"{start} --> {end}\n")
-                srt_file.write(f"{translated}\n\n")
-
-        print("🔥 [3/3] 자막 합성 중...")
+        # [4] 번역 담당: Claude (실전 번역 - 루프)
+        srt_content = ""
+        print("🇰🇷 3. Claude가 감칠맛 나게 번역 중...")
         
-        # 3. FFmpeg로 자막 입히기
-        try:
-            input_ffmpeg = ffmpeg.input(input_path)
-            audio_ffmpeg = input_ffmpeg.audio
-            
-            # 자막 스타일 설정 (맑은고딕, 20pt, 흰색글씨)
-            video_ffmpeg = input_ffmpeg.video.filter(
-                'subtitles', 
-                srt_path, 
-                force_style='FontName=Malgun Gothic,FontSize=20,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,BorderStyle=1,Outline=1,Shadow=0,MarginV=25'
-            )
+        segments = transcript.segments
+        
+        for i, segment in enumerate(segments): 
+            start = format_timestamp(segment.start) 
+            end = format_timestamp(segment.end)
+            text = segment.text
 
-            out = ffmpeg.output(
-                video_ffmpeg, 
-                audio_ffmpeg, 
-                output_video_path, 
-                vcodec='libx264', 
-                preset='medium',
-                crf=23,
-                acodec='aac'
+            # Claude에게 번역 요청
+            trans_res = anthropic_client.messages.create(
+                model=CLAUDE_MODEL,
+                max_tokens=300,
+                temperature=0,
+                system=custom_system_prompt, 
+                messages=[
+                    {"role": "user", "content": f"Translate this subtitle to Korean naturally: {text}"}
+                ]
             )
-            out.run(overwrite_output=True, quiet=True)
             
-            print("✅ 완료! 다운로드 시작")
-            return FileResponse(output_video_path, filename=f"walnut_HQ_{filename}")
+            kor_text = trans_res.content[0].text
+            srt_content += f"{i+1}\n{start} --> {end}\n{kor_text}\n\n"
+            
+            # 진행 상황 로그 (선택 사항)
+            print(f"[{i+1}/{len(segments)}] 번역 완료")
 
-        except ffmpeg.Error as e:
-            print("FFmpeg 에러:", e)
-            return {"error": "자막 합성 실패 (FFmpeg 설치 확인 필요)"}
+        # SRT 파일 저장
+        srt_path = os.path.join(UPLOAD_DIR, f"{file_id}.srt")
+        with open(srt_path, "w", encoding="utf-8") as f:
+            f.write(srt_content)
+
+        # [5] 자막 합성 (FFmpeg)
+        output_video_path = os.path.join(UPLOAD_DIR, f"subtitled_{file_id}.mp4")
+        
+        # 윈도우 경로 문제 해결을 위한 이스케이프 처리
+        # 드라이브 문자 뒤의 콜론(:)을 이스케이프하고 역슬래시를 슬래시로 변경
+        abs_srt_path = os.path.abspath(srt_path).replace("\\", "/").replace(":", "\\\\:")
+        
+        print("🎬 4. 자막 합성 중...")
+        # 폰트 스타일 지정 (맑은 고딕 등 한글 폰트 추천)
+        style = "Fontname=Malgun Gothic,Fontsize=20,PrimaryColour=&H00FFFF&,OutlineColour=&H000000&,BorderStyle=1,Outline=1,Shadow=0,MarginV=20"
+        
+        subprocess.run([
+            'ffmpeg', '-y', 
+            '-i', abs_input_path, 
+            '-vf', f"subtitles='{abs_srt_path}':force_style='{style}'", 
+            '-c:a', 'copy', 
+            output_video_path
+        ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        print("✅ 모든 작업 완료! 파일 전송 시작")
+        
+        return FileResponse(output_video_path, media_type="video/mp4", filename="walnut_output.mp4")
 
     except Exception as e:
-        print(f"❌ 에러: {e}")
-        return {"error": str(e)}
-        
-    finally:
-        # 임시 파일 삭제
-        if os.path.exists(input_path): os.remove(input_path)
-        if os.path.exists(srt_path): os.remove(srt_path)
+        print(f"❌ 에러 발생: {e}")
+        # 에러 내용을 그대로 클라이언트에 전달 (디버깅용)
+        raise HTTPException(status_code=500, detail=str(e))
