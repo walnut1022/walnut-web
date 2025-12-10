@@ -48,9 +48,10 @@ export default function Home() {
   </div>
 </section>
 
-      {/* 업로더 */}
+{/* 업로더 */}
       <section className="pb-32 px-6">
         <div className="max-w-5xl mx-auto">
+          {/* props 없이 그냥 호출 (토큰 기능은 나중에 추가할게!) */}
           <VideoTranslator userTokens={tokens} onTokenUpdate={setTokens} />
         </div>
       </section>
